@@ -8,10 +8,15 @@ venv/
 # Claude Code harness state (agent worktrees, etc.) -- not project content
 .claude/
 
-# Trained model artifacts and generated data (regenerate locally, don't commit)
-models/*.joblib
-data/*.tdms
+# Trained model artifacts and generated data (regenerate locally, don't commit).
+# Recursive (**) since synthetic_tdms.py/the GUI write into subdirectories
+# like data/normal/, data/test/, not just data/ directly.
+models/**/*.joblib
+data/**/*.tdms
+data/**/*.csv
+data/**/*.xlsx
 *.png
+results/
 !data/.gitkeep
 !models/.gitkeep
 
