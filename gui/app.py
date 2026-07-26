@@ -10,10 +10,21 @@ when validating a PyInstaller build (see packaging/build_linux_smoke.sh).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Must be set before torch is imported anywhere in the process (transitively,
+# via gui.main_window -> gui.train_dialog -> src.dl_model). This app is
+# CPU-only by design (AutoencoderDetector defaults to device="cpu", no GPU
+# assumed) -- but if a user's environment happens to have a GPU-enabled torch
+# wheel installed without a properly configured CUDA driver, torch probing
+# CUDA from the training background thread reliably crashes the process.
+# Forcing no visible CUDA devices avoids that regardless of which wheel is
+# installed.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 from PySide6.QtWidgets import QApplication
 
