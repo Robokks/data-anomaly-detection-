@@ -14,6 +14,7 @@ from gui.channel_panel import ChannelPanel
 from gui.plot_panel import PlotPanel
 from gui.results_panel import ResultsPanel
 from gui.session_panel import SessionPanel
+from gui.signature_panel import SignatureDialog
 from gui.train_dialog import TrainDialog
 from src.pipeline import save_model
 
@@ -45,6 +46,11 @@ class MainWindow(QMainWindow):
         train_action.triggered.connect(self._on_train_clicked)
         toolbar.addAction(train_action)
         self.train_action = train_action
+
+        signature_action = QAction("Signature Analysis...", self)
+        signature_action.triggered.connect(self._on_signature_clicked)
+        toolbar.addAction(signature_action)
+        self.signature_action = signature_action
 
         save_model_action = QAction("Save Model...", self)
         save_model_action.triggered.connect(self._on_save_model_clicked)
@@ -93,6 +99,10 @@ class MainWindow(QMainWindow):
         self.results_panel.set_scores(scores)
         self.plot_panel.overlay_anomalies(scores)
         self.statusBar().showMessage(f"Trained {model_type} model: {int(scores['is_anomaly'].sum())} window(s) flagged.")
+
+    def _on_signature_clicked(self) -> None:
+        dialog = SignatureDialog(self.state, self)
+        dialog.exec()
 
     def _on_save_model_clicked(self) -> None:
         if self.state.model is None:
