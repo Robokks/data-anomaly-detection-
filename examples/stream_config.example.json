@@ -1,7 +1,7 @@
 {
-  "model": "models/full_cycle_demo.joblib",
-  "baseline_dir": "examples/tdms",
-  "sample_rate": 10000,
+  "model": "models/anomaly_detector.joblib",
+  "baseline_dir": "data/normal",
+  "sample_rate": 1000,
   "window_size": 256,
   "host": "0.0.0.0",
   "port": 9999,

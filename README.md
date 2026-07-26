@@ -199,8 +199,10 @@ for the full flag list; Ctrl+C stops it cleanly.
 Typing out the flags above every run is awkward from an IDE like PyCharm,
 which by default runs a script with no arguments. Instead, put the values
 in a JSON file and pass just `--config PATH` — an example is checked in at
-[`examples/stream_config.example.json`](examples/stream_config.example.json)
-(points at this repo's own checked-in demo model/data, so it runs as-is):
+[`examples/stream_config.example.json`](examples/stream_config.example.json),
+matching the `models/anomaly_detector.joblib` / `data/normal` paths from
+"Try it without real hardware" above (train that model first, or edit the
+example to point at your own model/baseline paths):
 
 ```bash
 python -m src.stream_server --config examples/stream_config.example.json
