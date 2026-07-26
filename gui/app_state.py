@@ -23,6 +23,10 @@ class AppState(QObject):
     sessionsGrouped = Signal(list)  # list[TestSession]
     # Emitted once a session/file has been loaded into a working DataFrame.
     fileLoaded = Signal(object)  # pd.DataFrame
+    # Emitted when the set of sessions selected in the session tree changes
+    # (one when a single row is selected, more when multiple are Ctrl/Shift-
+    # selected for combined/batch training).
+    trainingSessionsChanged = Signal(list)  # list[TestSession]
     # Emitted when the user toggles Plot/Train checkboxes in the channel panel.
     channelSelectionChanged = Signal(list, list)  # (plot_channels, train_channels)
     # Emitted when the time-range region/fields change.
@@ -40,6 +44,7 @@ class AppState(QObject):
         self.sessions: list[TestSession] = []
         self.current_session: TestSession | None = None
         self.current_df: pd.DataFrame | None = None
+        self.training_sessions: list[TestSession] = []
 
         self.plot_channels: list[str] = []
         self.train_channels: list[str] = []
@@ -73,6 +78,10 @@ class AppState(QObject):
         self.fileLoaded.emit(df)
         self.channelSelectionChanged.emit(self.plot_channels, self.train_channels)
         self.timeRangeChanged.emit(None, None)
+
+    def set_training_sessions(self, sessions: list[TestSession]) -> None:
+        self.training_sessions = list(sessions)
+        self.trainingSessionsChanged.emit(self.training_sessions)
 
     def set_channel_selection(self, plot_channels: list[str], train_channels: list[str]) -> None:
         self.plot_channels = list(plot_channels)

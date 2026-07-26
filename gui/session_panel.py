@@ -2,8 +2,11 @@
 
 Lets the user pick a machine type, scans a folder in the background,
 groups the discovered files into per-UUT sessions via
-``src.session_grouping``, and lets the user pick one to load into the rest
-of the app (plot/channel panels) via ``AppState``.
+``src.session_grouping``, and lets the user select one or more (Ctrl/Shift-
+click for multi-select) to load into the rest of the app via ``AppState``:
+the first selected session drives the plot/channel panels' single-session
+preview, and the full selection is tracked as ``AppState.training_sessions``
+for combined/batch training across multiple sessions at once.
 """
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -90,9 +94,17 @@ class SessionPanel(QWidget):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
+        hint_label = QLabel("Ctrl/Shift-click to select multiple sessions for combined training.")
+        hint_label.setWordWrap(True)
+        layout.addWidget(hint_label)
+
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Session / File", "Detail"])
         self.tree.setAlternatingRowColors(True)
+        # Ctrl/Shift-click to select multiple sessions for combined/batch
+        # training (see _on_selection_changed) -- Qt's default is
+        # single-selection, which is why multi-select previously did nothing.
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.tree)
 
@@ -166,15 +178,27 @@ class SessionPanel(QWidget):
         items = self.tree.selectedItems()
         if not items:
             return
-        item = items[0]
-        session = item.data(0, Qt.ItemDataRole.UserRole)
-        if session is None:
-            # A child (individual file) row was selected -- walk up to its session.
-            parent = item.parent()
-            session = parent.data(0, Qt.ItemDataRole.UserRole) if parent is not None else None
-        if session is None:
+
+        sessions: list[TestSession] = []
+        seen_ids: set[int] = set()
+        for item in items:
+            session = item.data(0, Qt.ItemDataRole.UserRole)
+            if session is None:
+                # A child (individual file) row was selected -- walk up to its session.
+                parent = item.parent()
+                session = parent.data(0, Qt.ItemDataRole.UserRole) if parent is not None else None
+            if session is not None and id(session) not in seen_ids:
+                seen_ids.add(id(session))
+                sessions.append(session)
+
+        if not sessions:
             return
-        self._load_session(session)
+
+        # All selected sessions are tracked for batch training (TrainDialog);
+        # the first one is also loaded as the single-session preview driving
+        # the plot/channel panels and time-range selection.
+        self.state.set_training_sessions(sessions)
+        self._load_session(sessions[0])
 
     def _load_session(self, session: TestSession) -> None:
         phases = DEFAULT_TRANSMISSION_PHASES if session.machine_type == MachineType.TRANSMISSION else None

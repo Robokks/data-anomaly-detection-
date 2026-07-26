@@ -90,6 +90,33 @@ def test_non_recursive_scan_skips_subfolders(qtbot, tmp_path):
     assert state.sessions[0].files[0].name == "top.tdms"
 
 
+def test_multi_selecting_sessions_tracks_all_for_training(qtbot, tmp_path):
+    write_tdms(tmp_path / "run_0.tdms", _make_normal_signals(n_samples=200, seed=0))
+    write_tdms(tmp_path / "run_1.tdms", _make_normal_signals(n_samples=200, seed=1))
+
+    state = AppState()
+    panel = SessionPanel(state)
+    qtbot.addWidget(panel)
+
+    with qtbot.waitSignal(state.sessionsGrouped, timeout=5000):
+        panel.load_directory(tmp_path)
+
+    assert panel.tree.selectionMode() == panel.tree.SelectionMode.ExtendedSelection
+
+    item0 = panel.tree.topLevelItem(0)
+    item1 = panel.tree.topLevelItem(1)
+
+    with qtbot.waitSignal(state.trainingSessionsChanged, timeout=2000):
+        item0.setSelected(True)
+    assert len(state.training_sessions) == 1
+
+    with qtbot.waitSignal(state.trainingSessionsChanged, timeout=2000):
+        item1.setSelected(True)
+
+    assert len(state.training_sessions) == 2
+    assert {s.uut_id for s in state.training_sessions} == {"run_0", "run_1"}
+
+
 def test_selecting_child_file_row_loads_its_parent_session(qtbot, tmp_path):
     write_transmission_session(tmp_path, uut_id="unit001", n_samples=200, seed=0)
 

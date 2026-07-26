@@ -1,4 +1,5 @@
 from gui.app_state import AppState
+from gui.session_panel import SessionPanel
 from gui.train_dialog import TrainDialog
 from src.data_loader import load_dataframe
 from src.synthetic_tdms import _make_normal_signals, write_tdms
@@ -80,6 +81,35 @@ def test_train_dialog_deep_learning_end_to_end(qtbot, tmp_path):
     assert model_type == "deep"
     assert "recon_error" in scores.columns
     assert state.model_type == "deep"
+
+
+def test_train_dialog_trains_on_multiple_selected_sessions(qtbot, tmp_path):
+    write_tdms(tmp_path / "run_0.tdms", _make_normal_signals(n_samples=4000, seed=0))
+    write_tdms(tmp_path / "run_1.tdms", _make_normal_signals(n_samples=4000, seed=1))
+
+    state = AppState()
+    panel = SessionPanel(state)
+    qtbot.addWidget(panel)
+
+    with qtbot.waitSignal(state.sessionsGrouped, timeout=5000):
+        panel.load_directory(tmp_path)
+
+    item0 = panel.tree.topLevelItem(0)
+    item1 = panel.tree.topLevelItem(1)
+    item0.setSelected(True)
+    item1.setSelected(True)
+    assert len(state.training_sessions) == 2
+
+    dialog = TrainDialog(state)
+    qtbot.addWidget(dialog)
+    assert "2 sessions" in dialog.info_label.text()
+
+    with qtbot.waitSignal(dialog.trainingFinished, timeout=15000) as blocker:
+        dialog._on_train_clicked()
+
+    model, model_type, scores = blocker.args
+    assert model_type == "classic"
+    assert set(scores["source_file"].unique()) == {"run_0", "run_1"}
 
 
 def test_train_dialog_error_with_no_channels_selected(qtbot, tmp_path):

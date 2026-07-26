@@ -1,13 +1,13 @@
-"""Modal dialog: configure and run model training on the currently loaded session.
+"""Modal dialog: configure and run model training on the selected session(s).
 
 Runs training on a background QThread (important for the deep-learning
 model, which can take real time even on small data) so the UI stays
-responsive. Trains on ``AppState.current_df`` filtered to the Train-checked
-channels and the current time range -- i.e. whatever the user has curated
-via the channel/plot panels. Multi-session batch training (training across
-every session in a scanned folder at once) is available today via the CLI
-(``src/train.py --data-dir ...``); this dialog trains on one loaded session
-at a time.
+responsive. Trains on whichever session(s) are selected in the session
+panel's tree (Ctrl/Shift-click selects more than one -- see
+``AppState.training_sessions``), each filtered to the Train-checked
+channels and the current time range, i.e. whatever the user has curated via
+the channel/plot panels. This mirrors the CLI's ``src/train.py --data-dir
+...`` batch training (one model fit across every given session's windows).
 """
 from __future__ import annotations
 
@@ -29,7 +29,8 @@ from PySide6.QtWidgets import (
 )
 
 from gui.app_state import AppState
-from src.pipeline import score_model, train_model
+from src.pipeline import DEFAULT_TRANSMISSION_PHASES, score_model, train_model
+from src.session_grouping import MachineType, TestSession, load_session
 from src.time_range import select_range
 
 
@@ -161,17 +162,18 @@ class TrainDialog(QDialog):
             ok_button.setEnabled(False)
             return
         n_channels = len(self.state.train_channels)
-        session_name = getattr(self.state.current_session, "uut_id", None) or "(loaded file)"
+        sessions = self.state.training_sessions
+        if len(sessions) > 1:
+            session_desc = f"{len(sessions)} sessions ({', '.join(s.uut_id for s in sessions)})"
+        else:
+            session_desc = getattr(self.state.current_session, "uut_id", None) or "(loaded file)"
         self.info_label.setText(
-            f"Training on session '{session_name}' using {n_channels} channel(s): "
+            f"Training on {session_desc} using {n_channels} channel(s): "
             f"{', '.join(self.state.train_channels) or '(none selected)'}"
         )
         ok_button.setEnabled(n_channels > 0)
 
-    def _prepare_frame(self) -> pd.DataFrame:
-        df = self.state.current_df
-        if df is None:
-            raise RuntimeError("No session loaded.")
+    def _filter_and_trim(self, df: pd.DataFrame) -> pd.DataFrame:
         columns = [c for c in self.state.train_channels if c in df.columns]
         if not columns:
             raise RuntimeError("No channels selected for training (check at least one Train checkbox).")
@@ -181,9 +183,24 @@ class TrainDialog(QDialog):
             frame = select_range(frame, start=start, end=end)
         return frame
 
+    def _load_training_session_df(self, session: TestSession) -> pd.DataFrame:
+        phases = DEFAULT_TRANSMISSION_PHASES if session.machine_type == MachineType.TRANSMISSION else None
+        return load_session(session, phases=phases)
+
+    def _prepare_frames(self) -> list[pd.DataFrame]:
+        sessions = self.state.training_sessions or ([self.state.current_session] if self.state.current_session else [])
+        if not sessions:
+            # No TestSession objects tracked (e.g. a DataFrame set directly
+            # onto AppState rather than via the session panel's tree) --
+            # fall back to whatever is already loaded as current_df.
+            if self.state.current_df is None:
+                raise RuntimeError("No session loaded.")
+            return [self._filter_and_trim(self.state.current_df)]
+        return [self._filter_and_trim(self._load_training_session_df(session)) for session in sessions]
+
     def _on_train_clicked(self) -> None:
         try:
-            frame = self._prepare_frame()
+            frames = self._prepare_frames()
         except Exception as exc:  # noqa: BLE001
             self.status_label.setText(f"Error: {exc}")
             return
@@ -207,7 +224,7 @@ class TrainDialog(QDialog):
         self.progress_bar.show()
 
         self._thread = QThread(self)
-        self._worker = _TrainWorker(model_type, [frame], window_size, step, model_kwargs)
+        self._worker = _TrainWorker(model_type, frames, window_size, step, model_kwargs)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_training_finished)
