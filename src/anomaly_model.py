@@ -34,6 +34,15 @@ class AnomalyDetector:
     pca_variance: float = 0.95
     random_state: int = 42
 
+    # Opt-in hook for a future spectral-deviation signal (see src/spectral.py,
+    # not yet implemented). Both default to values that make
+    # ``_spectral_deviation`` a no-op, so behavior is unchanged today.
+    spectral_weight: float = 0.0
+    # Will eventually hold ``dict[str, SignatureBaseline]`` (per-channel
+    # baselines from the not-yet-built src/spectral.py). Loosely typed for
+    # now since that class doesn't exist yet.
+    signature_baselines: dict | None = None
+
     feature_columns_: list[str] = field(default_factory=list, repr=False)
     scaler_: StandardScaler | None = field(default=None, repr=False)
     iso_forest_: IsolationForest | None = field(default=None, repr=False)
@@ -42,6 +51,9 @@ class AnomalyDetector:
     iso_score_std_: float = 1.0
     recon_error_mean_: float = 0.0
     recon_error_std_: float = 1.0
+    # Populated only when the (currently dead) spectral-deviation branch runs.
+    spectral_dev_mean_: float = 0.0
+    spectral_dev_std_: float = 1.0
     threshold_: float = 0.0
 
     def _select_numeric(self, features: pd.DataFrame) -> pd.DataFrame:
@@ -71,14 +83,47 @@ class AnomalyDetector:
         self.iso_score_mean_, self.iso_score_std_ = raw_iso.mean(), raw_iso.std() or 1.0
         self.recon_error_mean_, self.recon_error_std_ = raw_recon.mean(), raw_recon.std() or 1.0
 
-        combined = self._combine(raw_iso, raw_recon)
+        spectral_dev = self._spectral_deviation(features)
+        if spectral_dev is None:
+            combined = self._combine(raw_iso, raw_recon)
+        else:
+            self.spectral_dev_mean_, self.spectral_dev_std_ = (
+                spectral_dev.mean(),
+                spectral_dev.std() or 1.0,
+            )
+            combined = self._combine(raw_iso, raw_recon, spectral_dev)
         self.threshold_ = float(np.percentile(combined, 100 * (1 - self.contamination)))
         return self
 
-    def _combine(self, raw_iso: np.ndarray, raw_recon: np.ndarray) -> np.ndarray:
+    def _spectral_deviation(self, features: pd.DataFrame) -> np.ndarray | None:
+        """Optional third anomaly signal: deviation from per-channel spectral
+        signature baselines (see the future src/spectral.py::SignatureBaseline).
+
+        Returns ``None`` (today, always) when spectral scoring is disabled --
+        i.e. ``spectral_weight == 0.0`` or no ``signature_baselines`` are set.
+        Real deviation scoring against ``SignatureBaseline`` objects is left
+        for a later PR once that class exists.
+        """
+        if self.spectral_weight == 0.0 or not self.signature_baselines:
+            return None
+        raise NotImplementedError(
+            "Spectral deviation scoring requires src.spectral.SignatureBaseline, "
+            "which is not yet implemented."
+        )
+
+    def _combine(
+        self,
+        raw_iso: np.ndarray,
+        raw_recon: np.ndarray,
+        raw_spectral: np.ndarray | None = None,
+    ) -> np.ndarray:
         z_iso = (raw_iso - self.iso_score_mean_) / self.iso_score_std_
         z_recon = (raw_recon - self.recon_error_mean_) / self.recon_error_std_
-        return (z_iso + z_recon) / 2.0
+        if raw_spectral is None:
+            return (z_iso + z_recon) / 2.0
+        z_spectral = (raw_spectral - self.spectral_dev_mean_) / self.spectral_dev_std_
+        base_weight = 1.0 - self.spectral_weight
+        return base_weight * ((z_iso + z_recon) / 2.0) + self.spectral_weight * z_spectral
 
     def score(self, features: pd.DataFrame) -> pd.DataFrame:
         if self.scaler_ is None or self.iso_forest_ is None or self.pca_ is None:
@@ -92,7 +137,11 @@ class AnomalyDetector:
         reconstructed = self.pca_.inverse_transform(transformed)
         raw_recon = np.mean((X - reconstructed) ** 2, axis=1)
 
-        combined = self._combine(raw_iso, raw_recon)
+        spectral_dev = self._spectral_deviation(features)
+        if spectral_dev is None:
+            combined = self._combine(raw_iso, raw_recon)
+        else:
+            combined = self._combine(raw_iso, raw_recon, spectral_dev)
         return pd.DataFrame(
             {
                 "iso_forest_score": raw_iso,
