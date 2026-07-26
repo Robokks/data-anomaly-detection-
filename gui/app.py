@@ -26,9 +26,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # installed.
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
+from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
 
 from gui.main_window import MainWindow
+from gui.theme import ThemeManager
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,8 +46,17 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
+    QCoreApplication.setOrganizationName("AnomalyDetection")
+    QCoreApplication.setApplicationName("GUI")
+
     app = QApplication.instance() or QApplication(sys.argv)
-    window = MainWindow()
+
+    # Applied before MainWindow is constructed so there's no flash of the
+    # wrong theme on launch.
+    theme_manager = ThemeManager()
+    theme_manager.apply(app)
+
+    window = MainWindow(theme_manager=theme_manager)
 
     if args.smoke_test_and_quit:
         window.show()

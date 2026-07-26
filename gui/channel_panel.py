@@ -46,6 +46,7 @@ class ChannelPanel(QWidget):
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(_COLUMNS)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
 
         self.state.fileLoaded.connect(self._on_file_loaded)

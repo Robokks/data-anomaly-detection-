@@ -23,11 +23,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -40,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.app_state import AppState
+from gui.theme import ThemeManager
 from src.data_loader import load_directory
 from src.live_scorer import STAT_NAMES, LiveScorer, LiveWindowResult
 from src.pipeline import get_model_window_size, load_model
@@ -53,9 +56,10 @@ class LiveMonitorPanel(QDialog):
     windowScored = Signal(object)  # LiveWindowResult
     serverError = Signal(str)
 
-    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
+    def __init__(self, state: AppState, parent: QWidget | None = None, theme_manager: ThemeManager | None = None) -> None:
         super().__init__(parent)
         self.state = state
+        self.theme_manager = theme_manager or ThemeManager()
         self.setWindowTitle("Live Monitor")
         self.setModal(False)
         self.resize(900, 500)
@@ -82,7 +86,8 @@ class LiveMonitorPanel(QDialog):
         model_row.addWidget(self.load_model_button)
         layout.addLayout(model_row)
 
-        form = QFormLayout()
+        model_group = QGroupBox("Model")
+        model_form = QFormLayout(model_group)
 
         baseline_row = QHBoxLayout()
         self.baseline_dir_edit = QLineEdit()
@@ -92,39 +97,46 @@ class LiveMonitorPanel(QDialog):
         self.browse_baseline_button = QPushButton("Browse...")
         self.browse_baseline_button.clicked.connect(self._on_browse_baseline_clicked)
         baseline_row.addWidget(self.browse_baseline_button)
-        form.addRow("Baseline folder:", baseline_row)
-
-        self.sample_rate_spin = QDoubleSpinBox()
-        self.sample_rate_spin.setRange(0.1, 1_000_000)
-        self.sample_rate_spin.setValue(10000)
-        form.addRow("Sample rate (Hz):", self.sample_rate_spin)
+        model_form.addRow("Baseline folder:", baseline_row)
 
         self.window_size_spin = QSpinBox()
         self.window_size_spin.setRange(2, 1_000_000)
         self.window_size_spin.setValue(256)
-        form.addRow("Model window size:", self.window_size_spin)
+        model_form.addRow("Model window size:", self.window_size_spin)
+        layout.addWidget(model_group)
+
+        windowing_group = QGroupBox("Windowing")
+        windowing_form = QFormLayout(windowing_group)
+
+        self.sample_rate_spin = QDoubleSpinBox()
+        self.sample_rate_spin.setRange(0.1, 1_000_000)
+        self.sample_rate_spin.setValue(10000)
+        windowing_form.addRow("Sample rate (Hz):", self.sample_rate_spin)
 
         self.window_duration_spin = QDoubleSpinBox()
         self.window_duration_spin.setRange(0.01, 3600)
         self.window_duration_spin.setValue(1.0)
-        form.addRow("Stats window (s):", self.window_duration_spin)
+        windowing_form.addRow("Stats window (s):", self.window_duration_spin)
 
         self.contamination_spin = QDoubleSpinBox()
         self.contamination_spin.setRange(0.001, 0.5)
         self.contamination_spin.setSingleStep(0.005)
         self.contamination_spin.setDecimals(3)
         self.contamination_spin.setValue(0.05)
-        form.addRow("Channel contamination:", self.contamination_spin)
+        windowing_form.addRow("Channel contamination:", self.contamination_spin)
+        layout.addWidget(windowing_group)
+
+        connection_group = QGroupBox("Connection")
+        connection_form = QFormLayout(connection_group)
 
         self.host_edit = QLineEdit("0.0.0.0")
-        form.addRow("Host:", self.host_edit)
+        connection_form.addRow("Host:", self.host_edit)
 
         self.port_spin = QSpinBox()
         self.port_spin.setRange(0, 65535)
         self.port_spin.setValue(9999)
-        form.addRow("Port (0 = auto):", self.port_spin)
-
-        layout.addLayout(form)
+        connection_form.addRow("Port (0 = auto):", self.port_spin)
+        layout.addWidget(connection_group)
 
         button_row = QHBoxLayout()
         self.start_button = QPushButton("Start")
@@ -142,6 +154,7 @@ class LiveMonitorPanel(QDialog):
 
         self.table = QTableWidget(0, len(_TABLE_COLUMNS))
         self.table.setHorizontalHeaderLabels(_TABLE_COLUMNS)
+        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
 
         self.windowScored.connect(self._on_window_scored)
@@ -269,6 +282,14 @@ class LiveMonitorPanel(QDialog):
                 self.table.setItem(row, col, QTableWidgetItem(""))
             self._row_for_channel[name] = row
 
+    def _anomaly_item(self, is_anomaly: bool | None) -> QTableWidgetItem:
+        item = QTableWidgetItem("" if is_anomaly is None else ("Yes" if is_anomaly else "No"))
+        if is_anomaly:
+            palette = self.theme_manager.current_palette
+            item.setBackground(QBrush(QColor(palette.danger)))
+            item.setForeground(QBrush(QColor("#ffffff")))
+        return item
+
     def _on_window_scored(self, result: LiveWindowResult) -> None:
         for channel, channel_result in result.channels.items():
             row = self._row_for_channel.get(channel)
@@ -278,15 +299,14 @@ class LiveMonitorPanel(QDialog):
                 self.table.setItem(row, col, QTableWidgetItem(f"{channel_result.stats[stat]:.4g}"))
             score_col = 1 + len(STAT_NAMES)
             self.table.setItem(row, score_col, QTableWidgetItem(f"{channel_result.deviation_score:.4g}"))
-            self.table.setItem(row, score_col + 1, QTableWidgetItem("Yes" if channel_result.is_anomaly else "No"))
+            self.table.setItem(row, score_col + 1, self._anomaly_item(channel_result.is_anomaly))
 
         overall_row = self._row_for_channel.get(_OVERALL_ROW_LABEL)
         if overall_row is not None:
             score_col = 1 + len(STAT_NAMES)
             score_text = "" if result.overall_anomaly_score is None else f"{result.overall_anomaly_score:.4g}"
-            anomaly_text = "" if result.overall_is_anomaly is None else ("Yes" if result.overall_is_anomaly else "No")
             self.table.setItem(overall_row, score_col, QTableWidgetItem(score_text))
-            self.table.setItem(overall_row, score_col + 1, QTableWidgetItem(anomaly_text))
+            self.table.setItem(overall_row, score_col + 1, self._anomaly_item(result.overall_is_anomaly))
 
         self.status_label.setText(
             f"Window {result.window_index} @ {result.n_samples_seen} samples seen -- listening."

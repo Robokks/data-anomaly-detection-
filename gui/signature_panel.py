@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -22,21 +23,27 @@ from PySide6.QtWidgets import (
 )
 
 from gui.app_state import AppState
+from gui.theme import ThemeManager
 from src.spectral import SignatureBaseline, compute_spectrum, fit_baselines_from_frames
 from src.time_range import select_range
 
 
 class SignatureDialog(QDialog):
-    def __init__(self, state: AppState, parent=None) -> None:
+    def __init__(self, state: AppState, parent=None, theme_manager: ThemeManager | None = None) -> None:
         super().__init__(parent)
         self.state = state
+        self.theme_manager = theme_manager or ThemeManager()
         self.setWindowTitle("Signature Analysis")
         self.resize(700, 500)
         self._baseline: SignatureBaseline | None = None
+        self._last_current_values = None
+        self._last_sample_rate = None
+        self._last_window_size: int | None = None
 
         layout = QVBoxLayout(self)
 
-        form = QFormLayout()
+        settings_group = QGroupBox("Signature settings")
+        form = QFormLayout(settings_group)
         self.channel_combo = QComboBox()
         form.addRow("Channel:", self.channel_combo)
 
@@ -44,7 +51,7 @@ class SignatureDialog(QDialog):
         self.window_size_spin.setRange(2, 1_000_000)
         self.window_size_spin.setValue(256)
         form.addRow("Baseline window size:", self.window_size_spin)
-        layout.addLayout(form)
+        layout.addWidget(settings_group)
 
         button_row = QHBoxLayout()
         self.compute_button = QPushButton("Compute Signature")
@@ -60,13 +67,27 @@ class SignatureDialog(QDialog):
         layout.addWidget(self.status_label)
 
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.addLegend()
         self.plot_widget.setLabel("bottom", "Frequency (Hz) / bin")
         self.plot_widget.setLabel("left", "Magnitude")
         layout.addWidget(self.plot_widget)
 
+        self.theme_manager.themeChanged.connect(self._apply_theme)
+        self._apply_theme(self.theme_manager.mode)
+
         self._populate_channels()
+
+    def _apply_theme(self, mode: str) -> None:
+        palette = self.theme_manager.current_palette
+        self.plot_widget.setBackground(palette.surface)
+        grid_alpha = 0.15 if mode == "dark" else 0.3
+        self.plot_widget.showGrid(x=True, y=True, alpha=grid_alpha)
+        for axis_name in ("bottom", "left"):
+            axis = self.plot_widget.getAxis(axis_name)
+            axis.setPen(pg.mkPen(palette.border))
+            axis.setTextPen(pg.mkPen(palette.text_secondary))
+        if self._baseline is not None:
+            self._plot(self._baseline, self._last_current_values, self._last_sample_rate, self._last_window_size)
 
     def _populate_channels(self) -> None:
         self.channel_combo.clear()
@@ -104,9 +125,13 @@ class SignatureDialog(QDialog):
         current_df = select_range(single_channel_df, start=start, end=end) if (start is not None or end is not None) else single_channel_df
         current_values = current_df[channel].to_numpy(dtype=float)
 
+        self._last_current_values = current_values
+        self._last_sample_rate = sample_rate
+        self._last_window_size = window_size
         self._plot(baseline, current_values, sample_rate, window_size)
 
     def _plot(self, baseline: SignatureBaseline, current_values, sample_rate, window_size: int) -> None:
+        palette = self.theme_manager.current_palette
         self.plot_widget.clear()
         self.plot_widget.addLegend()
 
@@ -114,12 +139,14 @@ class SignatureDialog(QDialog):
         lower = baseline.mean_ - baseline.std_
         upper_curve = self.plot_widget.plot(baseline.freqs_, upper, pen=pg.mkPen(None))
         lower_curve = self.plot_widget.plot(baseline.freqs_, lower, pen=pg.mkPen(None))
-        fill = pg.FillBetweenItem(upper_curve, lower_curve, brush=pg.mkBrush(31, 119, 180, 60))
+        envelope_brush = pg.mkColor(palette.accent)
+        envelope_brush.setAlpha(60)
+        fill = pg.FillBetweenItem(upper_curve, lower_curve, brush=pg.mkBrush(envelope_brush))
         self.plot_widget.addItem(fill)
-        self.plot_widget.plot(baseline.freqs_, baseline.mean_, pen=pg.mkPen("#1f77b4", width=2), name="Baseline mean")
+        self.plot_widget.plot(baseline.freqs_, baseline.mean_, pen=pg.mkPen(palette.accent, width=2), name="Baseline mean")
 
         current_freqs, current_mag = compute_spectrum(current_values, sample_rate=sample_rate)
-        self.plot_widget.plot(current_freqs, current_mag, pen=pg.mkPen("#d62728", width=2), name="Current selection")
+        self.plot_widget.plot(current_freqs, current_mag, pen=pg.mkPen(palette.danger, width=2), name="Current selection")
 
         summary = f"Fit baseline from {baseline.n_windows_} window(s) of '{baseline.channel}'."
         if len(current_values) == window_size:

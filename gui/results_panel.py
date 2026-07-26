@@ -26,6 +26,7 @@ class ResultsPanel(QWidget):
         layout.addWidget(self.summary_label)
 
         self.table = QTableWidget(0, 0)
+        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
 
         export_row = QHBoxLayout()

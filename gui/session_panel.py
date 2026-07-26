@@ -92,6 +92,7 @@ class SessionPanel(QWidget):
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Session / File", "Detail"])
+        self.tree.setAlternatingRowColors(True)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.tree)
 

@@ -14,14 +14,14 @@ import pyqtgraph as pg
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
 from gui.app_state import AppState
-
-_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
+from gui.theme import ThemeManager, plot_colors
 
 
 class PlotPanel(QWidget):
-    def __init__(self, state: AppState, parent: QWidget | None = None) -> None:
+    def __init__(self, state: AppState, parent: QWidget | None = None, theme_manager: ThemeManager | None = None) -> None:
         super().__init__(parent)
         self.state = state
+        self.theme_manager = theme_manager or ThemeManager()
         self._df: pd.DataFrame | None = None
         self._x: np.ndarray | None = None
         self._curves: dict[str, pg.PlotDataItem] = {}
@@ -41,7 +41,6 @@ class PlotPanel(QWidget):
         layout.addLayout(controls)
 
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.addLegend()
         self.plot_widget.setDownsampling(auto=True, mode="peak")
         self.plot_widget.setClipToView(True)
@@ -60,6 +59,39 @@ class PlotPanel(QWidget):
 
         self.state.fileLoaded.connect(self._on_file_loaded)
         self.state.channelSelectionChanged.connect(self._on_channel_selection_changed)
+
+        self.theme_manager.themeChanged.connect(self._apply_theme)
+        self._apply_theme(self.theme_manager.mode)
+
+    # -- theming ------------------------------------------------------------
+
+    def _apply_theme(self, mode: str) -> None:
+        palette = self.theme_manager.current_palette
+        self.plot_widget.setBackground(palette.surface)
+        grid_alpha = 0.15 if mode == "dark" else 0.3
+        self.plot_widget.showGrid(x=True, y=True, alpha=grid_alpha)
+        for axis_name in ("bottom", "left"):
+            axis = self.plot_widget.getAxis(axis_name)
+            axis.setPen(pg.mkPen(palette.border))
+            axis.setTextPen(pg.mkPen(palette.text_secondary))
+
+        # A very low-alpha fill + accent-colored edges: at the default "full
+        # data" selection the region spans the whole plot, so a stronger fill
+        # would otherwise wash out every curve underneath it.
+        region_fill = pg.mkColor(palette.accent)
+        region_fill.setAlpha(18)
+        self.region.setBrush(pg.mkBrush(region_fill))
+        self.region.setHoverBrush(pg.mkBrush(region_fill))
+        edge_pen = pg.mkPen(palette.accent, width=1.5)
+        for line in self.region.lines:
+            line.setPen(edge_pen)
+
+        # Curve colors are palette-dependent -- drop and redraw so they pick
+        # up the new theme's colors rather than being skipped as "already
+        # plotted" by _redraw_channels' dedup check.
+        for channel in list(self._curves):
+            self.plot_widget.removeItem(self._curves.pop(channel))
+        self._redraw_channels(self.state.plot_channels)
 
     # -- data loading -----------------------------------------------------
 
@@ -93,13 +125,14 @@ class PlotPanel(QWidget):
     def _redraw_channels(self, channels: list[str]) -> None:
         if self._df is None or self._x is None:
             return
+        colors = plot_colors(self.theme_manager.mode)
         for channel in list(self._curves):
             if channel not in channels:
                 self.plot_widget.removeItem(self._curves.pop(channel))
         for i, channel in enumerate(channels):
             if channel == "phase" or channel not in self._df.columns or channel in self._curves:
                 continue
-            color = _COLORS[i % len(_COLORS)]
+            color = colors[i % len(colors)]
             curve = self.plot_widget.plot(
                 self._x,
                 self._df[channel].to_numpy(dtype=float),
@@ -173,13 +206,15 @@ class PlotPanel(QWidget):
         if scores is None or scores.empty or "is_anomaly" not in scores.columns:
             return
         flagged = scores.index[scores["is_anomaly"]]
+        danger = pg.mkColor(self.theme_manager.current_palette.danger)
+        danger.setAlpha(60)
         for idx in flagged:
             try:
                 x_value = self._to_x(idx)
             except (ValueError, TypeError):
                 continue
             marker = pg.LinearRegionItem(
-                values=[x_value, x_value], movable=False, brush=pg.mkBrush(220, 20, 60, 60)
+                values=[x_value, x_value], movable=False, brush=pg.mkBrush(danger)
             )
             marker.setZValue(-10)
             self.plot_widget.addItem(marker)

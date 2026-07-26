@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGroupBox,
     QLabel,
     QSpinBox,
     QStackedWidget,
@@ -70,7 +71,8 @@ class TrainDialog(QDialog):
         self.info_label.setWordWrap(True)
         layout.addWidget(self.info_label)
 
-        form = QFormLayout()
+        general_group = QGroupBox("General")
+        form = QFormLayout(general_group)
 
         self.model_type_combo = QComboBox()
         self.model_type_combo.addItem("Classic (Isolation Forest + PCA)", "classic")
@@ -96,16 +98,16 @@ class TrainDialog(QDialog):
         self.contamination_spin.setValue(0.02)
         form.addRow("Contamination:", self.contamination_spin)
 
-        layout.addLayout(form)
+        layout.addWidget(general_group)
 
-        self.classic_widget = QWidget()
+        self.classic_widget = QGroupBox("Isolation Forest settings")
         classic_form = QFormLayout(self.classic_widget)
         self.n_estimators_spin = QSpinBox()
         self.n_estimators_spin.setRange(10, 2000)
         self.n_estimators_spin.setValue(200)
         classic_form.addRow("Isolation Forest trees:", self.n_estimators_spin)
 
-        self.deep_widget = QWidget()
+        self.deep_widget = QGroupBox("Autoencoder settings")
         deep_form = QFormLayout(self.deep_widget)
         self.epochs_spin = QSpinBox()
         self.epochs_spin.setRange(1, 1000)
