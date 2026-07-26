@@ -73,13 +73,31 @@ flagged windows show up in the results table and as an overlay on the plot
 
 ## Running the CLI
 
-Generate synthetic demo data if you don't have real files yet (vibration /
-temperature / pressure channels with injected spikes, drift, and noise
-bursts):
+Generate synthetic demo data if you don't have real files yet. Three
+`--channel-set` options:
 
 ```bash
+# basic: vibration/temperature/pressure at 1 kHz, small files -- quick smoke test
 python -m src.synthetic_tdms --out-dir data --n-normal 5 --n-samples 20000
+
+# full: a steady-state 10-channel rig (vibration, noise, speed, current,
+# voltage_a/b/c, temperature, pressure, torque) at a real sample rate/duration
+python -m src.synthetic_tdms --out-dir data --n-normal 100 --channel-set full \
+  --sample-rate 10000 --duration-seconds 10
+
+# cycle: the same 10 channels, but following a ramp/hold/de-ramp speed+torque
+# test cycle (0->1000->6000->1000->0 rpm, 0->50->250->0 Nm) with vibration/
+# noise/current tied to the profile -- see _make_test_cycle_signals in
+# src/synthetic_tdms.py for the exact physical relationships modeled.
+# Note: 100 files at these settings is ~500-600MB -- regenerate locally
+# rather than committing it (it's gitignored and seeded, so this exact
+# command reproduces byte-identical output every time).
+python -m src.synthetic_tdms --out-dir data --n-normal 100 --channel-set cycle \
+  --sample-rate 10000 --duration-min 5 --duration-max 10 --seed 0
 ```
+
+All three write normal training files to `data/normal/` and one test file
+with labeled injected anomalies to `data/test/test_run.tdms`.
 
 Train on a folder of normal recordings:
 
