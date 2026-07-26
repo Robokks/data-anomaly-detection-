@@ -5,6 +5,9 @@ __pycache__/
 .venv/
 venv/
 
+# Claude Code harness state (agent worktrees, etc.) -- not project content
+.claude/
+
 # Trained model artifacts and generated data (regenerate locally, don't commit)
 models/*.joblib
 data/*.tdms
