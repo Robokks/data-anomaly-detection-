@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 import time
 from datetime import datetime
@@ -32,8 +33,8 @@ from src.tcp_stream_server import TcpStreamServer
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Run the live anomaly scorer against a TCP sensor stream (headless).")
-    p.add_argument("--model", required=True, help="Path to a trained model (.joblib)")
-    p.add_argument("--baseline-dir", required=True, help="Directory of 'normal' reference data to fit the live baseline from")
+    p.add_argument("--model", default=None, help="Path to a trained model (.joblib)")
+    p.add_argument("--baseline-dir", default=None, help="Directory of 'normal' reference data to fit the live baseline from")
     p.add_argument("--recursive", dest="recursive", action="store_true", default=True, help="Scan subdirectories under --baseline-dir (default)")
     p.add_argument("--no-recursive", dest="recursive", action="store_false", help="Only scan the top-level directory")
     p.add_argument(
@@ -59,7 +60,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--channels", nargs="*", default=None, help="Subset of channel names to use (default: all)")
     p.add_argument("--start", default=None, help="Trim baseline data to start at this index/time (default: full data)")
     p.add_argument("--end", default=None, help="Trim baseline data to end at this index/time (default: full data)")
-    p.add_argument("--sample-rate", type=float, required=True, help="Sample rate of the live stream, in Hz")
+    p.add_argument("--sample-rate", type=float, default=None, help="Sample rate of the live stream, in Hz")
     p.add_argument(
         "--window-size",
         type=int,
@@ -77,11 +78,72 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="0.0.0.0", help="Host/interface to listen on (default: 0.0.0.0)")
     p.add_argument("--port", type=int, default=9999, help="TCP port to listen on (default: 9999)")
     p.add_argument("--output-csv", default=None, help="Append one flattened row per scored window to this CSV")
+    p.add_argument(
+        "--config",
+        default=None,
+        help=(
+            "Path to a JSON file providing default values for any flag above "
+            '(keys use dest names, e.g. "baseline_dir", "window_size"); an '
+            "explicit CLI flag overrides the same key from the config file. "
+            "Useful for running this script from an IDE run button with no "
+            "arguments."
+        ),
+    )
     return p
 
 
+def _apply_config_file(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Loads ``args.config`` (if set) and fills in any flag still at its
+    argparse default from the JSON file, so an explicit CLI flag always wins
+    over the same key in the config file.
+    """
+    if not args.config:
+        return
+
+    try:
+        with open(args.config) as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        parser.error(f"--config file not found: {args.config}")
+    except json.JSONDecodeError as exc:
+        parser.error(f"--config file is not valid JSON ({args.config}): {exc}")
+
+    if not isinstance(config, dict):
+        parser.error(f"--config file must contain a JSON object of flag-name: value pairs (got {type(config).__name__})")
+
+    valid_dests = {action.dest for action in parser._actions}
+    unknown_keys = sorted(set(config) - valid_dests)
+    if unknown_keys:
+        parser.error(f"--config file has unrecognized key(s): {', '.join(unknown_keys)}")
+
+    for key, value in config.items():
+        if getattr(args, key) == parser.get_default(key):
+            setattr(args, key, value)
+
+    if args.machine_type not in [m.value for m in MachineType]:
+        parser.error(
+            f"argument --machine-type: invalid choice: {args.machine_type!r} "
+            f"(choose from {', '.join(repr(m.value) for m in MachineType)})"
+        )
+    if args.phases is not None:
+        valid_phases = [ph.value for ph in Phase]
+        for phase in args.phases:
+            if phase not in valid_phases:
+                parser.error(
+                    f"argument --phases: invalid choice: {phase!r} "
+                    f"(choose from {', '.join(repr(ph) for ph in valid_phases)})"
+                )
+
+    missing = [name for name, val in (("--model", args.model), ("--baseline-dir", args.baseline_dir), ("--sample-rate", args.sample_rate)) if val is None]
+    if missing:
+        parser.error(f"the following arguments are required (via CLI flag or --config): {', '.join(missing)}")
+
+
 def parse_args() -> argparse.Namespace:
-    return _build_arg_parser().parse_args()
+    parser = _build_arg_parser()
+    args = parser.parse_args()
+    _apply_config_file(parser, args)
+    return args
 
 
 def _csv_fieldnames(channels: list[str]) -> list[str]:

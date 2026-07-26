@@ -1,4 +1,5 @@
 import csv
+import json
 import sys
 import time
 
@@ -217,3 +218,122 @@ def test_stream_server_no_baseline_data_raises_system_exit(tmp_path, monkeypatch
 
     with pytest.raises(SystemExit):
         stream_server.main()
+
+
+def _write_json_config(tmp_path, config, name="stream_config.json"):
+    path = tmp_path / name
+    path.write_text(json.dumps(config))
+    return path
+
+
+def test_stream_server_config_file_supplies_required_args_end_to_end(tmp_path, monkeypatch):
+    baseline_dir = _make_baseline_dir(tmp_path)
+    model_path = tmp_path / "model.joblib"
+    _train_and_save_classic_model(baseline_dir, model_path)
+
+    config_path = _write_json_config(
+        tmp_path,
+        {
+            "model": str(model_path),
+            "baseline_dir": str(baseline_dir),
+            "sample_rate": SAMPLE_RATE_HZ,
+            "window_size": WINDOW_SIZE,
+            "window_duration_seconds": WINDOW_SIZE / SAMPLE_RATE_HZ,
+            "host": "127.0.0.1",
+            "port": 0,
+        },
+    )
+
+    monkeypatch.setattr(sys, "argv", ["prog", "--config", str(config_path)])
+    args = stream_server.parse_args()
+
+    results = []
+    server, live_scorer = stream_server.build_server(args, extra_on_window=results.append)
+    port = server.start()
+    try:
+        signals = _make_normal_signals(n_samples=4000, seed=11)
+        stream_signals(
+            "127.0.0.1", port, signals, sample_rate_hz=SAMPLE_RATE_HZ,
+            batch_samples=137, batch_interval_ms=10, realtime=False,
+        )
+        expected_ticks = 4000 // WINDOW_SIZE
+        assert _wait_until(lambda: len(results) >= expected_ticks, timeout=10.0)
+    finally:
+        server.stop()
+
+    assert len(results) == expected_ticks
+
+
+def test_stream_server_cli_flag_overrides_config_file(tmp_path, monkeypatch):
+    baseline_dir = _make_baseline_dir(tmp_path)
+    model_path = tmp_path / "model.joblib"
+    _train_and_save_classic_model(baseline_dir, model_path)
+
+    config_path = _write_json_config(
+        tmp_path,
+        {
+            "model": str(model_path),
+            "baseline_dir": str(baseline_dir),
+            "sample_rate": SAMPLE_RATE_HZ,
+            "window_size": WINDOW_SIZE,
+            "host": "127.0.0.1",
+            "port": 12345,
+        },
+    )
+
+    monkeypatch.setattr(sys, "argv", ["prog", "--config", str(config_path), "--port", "0"])
+    args = stream_server.parse_args()
+
+    assert args.port == 0
+    assert args.host == "127.0.0.1"
+    assert args.model == str(model_path)
+
+
+def test_stream_server_config_file_unknown_key_raises_system_exit(tmp_path, monkeypatch, capsys):
+    baseline_dir = _make_baseline_dir(tmp_path)
+    model_path = tmp_path / "model.joblib"
+    _train_and_save_classic_model(baseline_dir, model_path)
+
+    config_path = _write_json_config(
+        tmp_path,
+        {
+            "model": str(model_path),
+            "baseline_dir": str(baseline_dir),
+            "sample_rate": SAMPLE_RATE_HZ,
+            "not_a_real_flag": 123,
+        },
+    )
+
+    monkeypatch.setattr(sys, "argv", ["prog", "--config", str(config_path)])
+    with pytest.raises(SystemExit):
+        stream_server.parse_args()
+
+    captured = capsys.readouterr()
+    assert "not_a_real_flag" in captured.err
+
+
+def test_stream_server_config_file_missing_required_args_raises_system_exit(tmp_path, monkeypatch, capsys):
+    baseline_dir = _make_baseline_dir(tmp_path)
+
+    config_path = _write_json_config(tmp_path, {"baseline_dir": str(baseline_dir)})
+
+    monkeypatch.setattr(sys, "argv", ["prog", "--config", str(config_path)])
+    with pytest.raises(SystemExit):
+        stream_server.parse_args()
+
+    captured = capsys.readouterr()
+    assert "--model" in captured.err
+    assert "--sample-rate" in captured.err
+
+
+def test_stream_server_malformed_config_file_raises_system_exit(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "bad_config.json"
+    config_path.write_text("not valid json {")
+
+    monkeypatch.setattr(sys, "argv", ["prog", "--config", str(config_path)])
+    with pytest.raises(SystemExit):
+        stream_server.parse_args()
+
+    captured = capsys.readouterr()
+    assert "traceback" not in captured.err.lower()
+    assert "json" in captured.err.lower()
