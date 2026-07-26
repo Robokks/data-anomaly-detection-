@@ -5,6 +5,15 @@ counts via setDownsampling/setClipToView, and so the time-range selector
 can be a native, draggable LinearRegionItem synced to explicit start/end
 fields -- matches "full data or from this point in time to that point in
 time."
+
+**Multiple Y scales**: channels can have wildly different magnitudes (e.g.
+vibration ~0-1 vs. speed ~0-6000), so plotting them all against one shared
+Y-axis makes the smaller-magnitude ones unreadable. Each additional channel
+beyond the first gets its own Y-axis + independently-auto-ranging
+``pg.ViewBox``, all X-linked to the main plot so panning/zooming stays in
+sync -- the standard pyqtgraph "multiple Y axes" pattern (see their
+MultiplePlotAxes example). The axis pen/label color matches that channel's
+curve color, since there's no room for a legend entry per axis.
 """
 from __future__ import annotations
 
@@ -24,8 +33,14 @@ class PlotPanel(QWidget):
         self.theme_manager = theme_manager or ThemeManager()
         self._df: pd.DataFrame | None = None
         self._x: np.ndarray | None = None
-        self._curves: dict[str, pg.PlotDataItem] = {}
         self._is_datetime_index = False
+
+        # Primary channel (first in the current selection) uses the
+        # PlotItem's own built-in left axis/ViewBox. Every channel after
+        # that gets its own secondary ViewBox + AxisItem (see _add_secondary_axis).
+        self._curves: dict[str, pg.PlotDataItem] = {}
+        self._channel_viewboxes: dict[str, pg.ViewBox] = {}
+        self._channel_axes: dict[str, pg.AxisItem] = {}
 
         layout = QVBoxLayout(self)
 
@@ -41,6 +56,8 @@ class PlotPanel(QWidget):
         layout.addLayout(controls)
 
         self.plot_widget = pg.PlotWidget()
+        self.plot_item = self.plot_widget.getPlotItem()
+        self.main_vb = self.plot_item.vb
         self.plot_widget.addLegend()
         self.plot_widget.setDownsampling(auto=True, mode="peak")
         self.plot_widget.setClipToView(True)
@@ -50,6 +67,12 @@ class PlotPanel(QWidget):
         self.region.setZValue(10)
         self.region.hide()
         self.plot_widget.addItem(self.region)
+
+        # Keeps every secondary channel ViewBox's screen geometry (and X
+        # range) matched to the main plot's -- required boilerplate for the
+        # multi-ViewBox-per-axis pattern; without it, secondary curves drift
+        # out of alignment on resize/zoom/pan.
+        self.main_vb.sigResized.connect(self._update_secondary_viewbox_geometry)
 
         self.region.sigRegionChanged.connect(self._update_fields_from_region)
         self.region.sigRegionChangeFinished.connect(self._on_region_changed)
@@ -70,10 +93,9 @@ class PlotPanel(QWidget):
         self.plot_widget.setBackground(palette.surface)
         grid_alpha = 0.15 if mode == "dark" else 0.3
         self.plot_widget.showGrid(x=True, y=True, alpha=grid_alpha)
-        for axis_name in ("bottom", "left"):
-            axis = self.plot_widget.getAxis(axis_name)
-            axis.setPen(pg.mkPen(palette.border))
-            axis.setTextPen(pg.mkPen(palette.text_secondary))
+        bottom_axis = self.plot_item.getAxis("bottom")
+        bottom_axis.setPen(pg.mkPen(palette.border))
+        bottom_axis.setTextPen(pg.mkPen(palette.text_secondary))
 
         # A very low-alpha fill + accent-colored edges: at the default "full
         # data" selection the region spans the whole plot, so a stronger fill
@@ -86,18 +108,15 @@ class PlotPanel(QWidget):
         for line in self.region.lines:
             line.setPen(edge_pen)
 
-        # Curve colors are palette-dependent -- drop and redraw so they pick
-        # up the new theme's colors rather than being skipped as "already
-        # plotted" by _redraw_channels' dedup check.
-        for channel in list(self._curves):
-            self.plot_widget.removeItem(self._curves.pop(channel))
+        # Curve/axis colors are palette-dependent -- full rebuild so they
+        # pick up the new theme's colors.
         self._redraw_channels(self.state.plot_channels)
 
     # -- data loading -----------------------------------------------------
 
     def _on_file_loaded(self, df: pd.DataFrame | None) -> None:
         self._df = df
-        self._curves.clear()
+        self._clear_channel_items()
         self.plot_widget.clear()
         self.plot_widget.addItem(self.region)
 
@@ -122,24 +141,87 @@ class PlotPanel(QWidget):
     def _on_channel_selection_changed(self, plot_channels: list[str], _train_channels: list[str]) -> None:
         self._redraw_channels(plot_channels)
 
+    # -- multi-axis channel rendering ----------------------------------------
+
+    def _clear_channel_items(self) -> None:
+        for channel, vb in list(self._channel_viewboxes.items()):
+            curve = self._curves.pop(channel, None)
+            if curve is not None:
+                vb.removeItem(curve)
+            axis = self._channel_axes.pop(channel, None)
+            if axis is not None:
+                self.plot_item.layout.removeItem(axis)
+                axis.setParentItem(None)
+            self.plot_item.scene().removeItem(vb)
+        self._channel_viewboxes.clear()
+        self._channel_axes.clear()
+
+        for curve in self._curves.values():
+            self.plot_item.removeItem(curve)
+        self._curves.clear()
+
+        if self.plot_item.legend is not None:
+            self.plot_item.legend.clear()
+
+    def _add_secondary_axis(self, channel: str, color: str) -> tuple[pg.ViewBox, pg.AxisItem]:
+        axis = pg.AxisItem("right")
+        axis.setPen(pg.mkPen(color))
+        axis.setTextPen(pg.mkPen(color))
+        axis.setLabel(channel, color=color)
+        # Column 3 is the first free slot to the right of the main plot's
+        # own left-axis(1)/viewbox(2) columns; each further secondary axis
+        # takes the next column over.
+        col = 3 + len(self._channel_viewboxes)
+        self.plot_item.layout.addItem(axis, 2, col)
+
+        vb = pg.ViewBox()
+        self.plot_item.scene().addItem(vb)
+        axis.linkToView(vb)
+        vb.setXLink(self.main_vb)
+        return vb, axis
+
+    def _update_secondary_viewbox_geometry(self) -> None:
+        rect = self.main_vb.sceneBoundingRect()
+        for vb in self._channel_viewboxes.values():
+            vb.setGeometry(rect)
+            vb.linkedViewChanged(self.main_vb, vb.XAxis)
+
     def _redraw_channels(self, channels: list[str]) -> None:
+        self._clear_channel_items()
         if self._df is None or self._x is None:
             return
+
         colors = plot_colors(self.theme_manager.mode)
-        for channel in list(self._curves):
-            if channel not in channels:
-                self.plot_widget.removeItem(self._curves.pop(channel))
-        for i, channel in enumerate(channels):
-            if channel == "phase" or channel not in self._df.columns or channel in self._curves:
-                continue
+        palette = self.theme_manager.current_palette
+        valid_channels = [c for c in channels if c != "phase" and c in self._df.columns]
+
+        for i, channel in enumerate(valid_channels):
             color = colors[i % len(colors)]
-            curve = self.plot_widget.plot(
-                self._x,
-                self._df[channel].to_numpy(dtype=float),
-                pen=pg.mkPen(color=color, width=1),
-                name=channel,
-            )
+            y = self._df[channel].to_numpy(dtype=float)
+            if i == 0:
+                curve = self.plot_item.plot(self._x, y, pen=pg.mkPen(color=color, width=1.5), name=channel)
+                left_axis = self.plot_item.getAxis("left")
+                left_axis.setPen(pg.mkPen(color))
+                left_axis.setTextPen(pg.mkPen(color))
+                left_axis.setLabel(channel, color=color)
+            else:
+                vb, axis = self._add_secondary_axis(channel, color)
+                curve = pg.PlotDataItem(self._x, y, pen=pg.mkPen(color=color, width=1.5))
+                vb.addItem(curve)
+                vb.autoRange()
+                if self.plot_item.legend is not None:
+                    self.plot_item.legend.addItem(curve, channel)
+                self._channel_viewboxes[channel] = vb
+                self._channel_axes[channel] = axis
             self._curves[channel] = curve
+
+        if not valid_channels:
+            left_axis = self.plot_item.getAxis("left")
+            left_axis.setPen(pg.mkPen(palette.border))
+            left_axis.setTextPen(pg.mkPen(palette.text_secondary))
+            left_axis.setLabel(None)
+
+        self._update_secondary_viewbox_geometry()
 
     # -- time-range region <-> fields --------------------------------------
 
