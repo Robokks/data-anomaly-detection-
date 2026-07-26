@@ -43,6 +43,14 @@ class AnomalyDetector:
     # now since that class doesn't exist yet.
     signature_baselines: dict | None = None
 
+    # Set by src.pipeline.train_model after fit() so downstream consumers
+    # (e.g. the live-stream scorer) can recover the window size a model
+    # expects without the caller having to separately track/re-enter it.
+    # None for models saved before this field existed -- callers must treat
+    # that as "unknown, ask the operator."
+    window_size_: int | None = None
+    step_: int | None = None
+
     feature_columns_: list[str] = field(default_factory=list, repr=False)
     scaler_: StandardScaler | None = field(default=None, repr=False)
     iso_forest_: IsolationForest | None = field(default=None, repr=False)

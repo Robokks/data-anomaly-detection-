@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from src.anomaly_model import AnomalyDetector
@@ -23,14 +24,28 @@ def test_write_and_load_tdms_roundtrip(tmp_path):
 
 def test_extract_window_features_shape():
     signals = _make_normal_signals(n_samples=1000, seed=2)
-    import pandas as pd
-
     df = pd.DataFrame(signals)
     features = extract_window_features(df, window_size=WINDOW_SIZE)
     assert len(features) == 1000 // WINDOW_SIZE
     for ch in signals:
-        for stat in ["mean", "std", "min", "max", "ptp", "rms", "skew", "kurtosis", "dom_freq_mag", "zero_crossing_rate"]:
+        for stat in ["mean", "std", "min", "max", "ptp", "rms", "crest_factor", "skew", "kurtosis", "dom_freq_mag", "zero_crossing_rate"]:
             assert f"{ch}_{stat}" in features.columns
+
+
+def test_crest_factor_hand_computed():
+    # A single spike among otherwise-zero samples has an easy-to-verify
+    # crest factor: peak / rms = 10 / sqrt(100 / 10) = 10 / sqrt(10).
+    x = np.zeros(10)
+    x[0] = 10.0
+    df = pd.DataFrame({"ch": x})
+    features = extract_window_features(df, window_size=10)
+    expected = 10.0 / np.sqrt(np.mean(x**2))
+    assert features["ch_crest_factor"].iloc[0] == pytest.approx(expected)
+
+    # All-zero window: rms == 0, crest_factor defined as 0.0 rather than NaN/inf.
+    df_zero = pd.DataFrame({"ch": np.zeros(10)})
+    features_zero = extract_window_features(df_zero, window_size=10)
+    assert features_zero["ch_crest_factor"].iloc[0] == 0.0
 
 
 def test_anomaly_detector_flags_injected_anomalies(tmp_path):

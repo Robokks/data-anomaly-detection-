@@ -16,6 +16,7 @@ def _window_stats(window: np.ndarray, channel: str, n_spectral_bands: int = 0) -
     dominant_freq_mag = float(fft_mag[dominant_freq_bin]) if len(fft_mag) > 1 else 0.0
 
     zero_crossings = np.sum(np.diff(np.sign(x - x.mean())) != 0)
+    peak = float(np.max(np.abs(x)))
 
     stats = {
         f"{channel}_mean": float(x.mean()),
@@ -24,6 +25,7 @@ def _window_stats(window: np.ndarray, channel: str, n_spectral_bands: int = 0) -
         f"{channel}_max": float(x.max()),
         f"{channel}_ptp": float(x.max() - x.min()),
         f"{channel}_rms": float(rms),
+        f"{channel}_crest_factor": peak / rms if rms > 0 else 0.0,
         f"{channel}_skew": float(skew(x)) if n > 2 else 0.0,
         f"{channel}_kurtosis": float(kurtosis(x)) if n > 2 else 0.0,
         f"{channel}_dom_freq_mag": dominant_freq_mag,

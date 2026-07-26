@@ -114,6 +114,13 @@ def train_model(
         features = extract_features_from_frames(clean_frames, window_size=window_size, step=step)
         model = AnomalyDetector(**model_kwargs)
         model.fit(features)
+        # AutoencoderDetector already stores its own window_size/step (it needs
+        # them for windowing raw arrays); AnomalyDetector doesn't otherwise
+        # track them since it only ever sees the post-windowed feature table.
+        # Stash them here so callers (e.g. the live-stream scorer) can recover
+        # the window size a saved model expects without re-entering it.
+        model.window_size_ = window_size
+        model.step_ = step or window_size
         return model
 
     if model_type == "deep":
@@ -122,6 +129,23 @@ def train_model(
         return model
 
     raise ValueError(f"Unknown model_type {model_type!r}; expected 'classic' or 'deep'")
+
+
+def get_model_window_size(model: AnomalyDetector | AutoencoderDetector, model_type: ModelType) -> tuple[int | None, int | None]:
+    """Return (window_size, step) the model was trained with, if known.
+
+    Both are ``None`` for a classic model saved before ``window_size_``/
+    ``step_`` existed -- callers should fall back to asking the operator.
+    Uses ``getattr`` with a default as extra insurance rather than direct
+    attribute access, though in practice a pickled instance missing these
+    from its restored ``__dict__`` still resolves them via the class-level
+    ``= None`` default (dataclass fields with a plain default are also class
+    attributes) -- ``getattr`` just keeps this contract explicit rather than
+    relying on that fallback.
+    """
+    if model_type == "deep":
+        return model.window_size, model.step
+    return getattr(model, "window_size_", None), getattr(model, "step_", None)
 
 
 def score_model(
