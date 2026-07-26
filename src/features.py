@@ -76,3 +76,78 @@ def extract_features_from_frames(
         f["source_file"] = df.attrs.get("source_file", "")
         feature_frames.append(f)
     return pd.concat(feature_frames, axis=0, ignore_index=True)
+
+
+def extract_raw_windows(
+    df: pd.DataFrame,
+    window_size: int = 256,
+    step: int | None = None,
+) -> tuple[np.ndarray, list]:
+    """Slide a fixed-size window over every channel and return raw waveforms.
+
+    Unlike ``extract_window_features`` (which reduces each window to summary
+    statistics), this keeps the raw, per-channel samples -- used by the deep
+    learning detector, which learns directly from waveform shape.
+
+    Returns a ``(n_windows, n_channels, window_size)`` array plus the list of
+    window-start index labels, one per window, taken from ``df.index`` at
+    each window's starting position -- the same indexing convention used by
+    ``extract_window_features``.
+    """
+    if window_size < 2:
+        raise ValueError("window_size must be >= 2")
+    step = step or window_size
+    n = len(df)
+    if n < window_size:
+        raise ValueError(f"DataFrame has {n} rows, shorter than window_size={window_size}")
+
+    channels = list(df.columns)
+    values = df[channels].to_numpy(dtype=float).T  # (n_channels, n)
+
+    windows = []
+    index: list = []
+    for start in range(0, n - window_size + 1, step):
+        end = start + window_size
+        windows.append(values[:, start:end])
+        index.append(df.index[start])
+
+    if windows:
+        arr = np.stack(windows, axis=0)
+    else:
+        arr = np.empty((0, len(channels), window_size))
+    return arr, index
+
+
+def extract_raw_windows_from_frames(
+    frames: list[pd.DataFrame],
+    window_size: int = 256,
+    step: int | None = None,
+) -> tuple[np.ndarray, list]:
+    """Extract raw windowed waveforms from multiple DataFrames and concatenate them.
+
+    All DataFrames must share the same set (and order) of channels/columns;
+    a ``ValueError`` is raised otherwise.
+    """
+    if not frames:
+        raise ValueError("frames must be a non-empty list of DataFrames")
+
+    reference_columns = list(frames[0].columns)
+    for df in frames:
+        if list(df.columns) != reference_columns:
+            raise ValueError(
+                "All DataFrames must share the same set (and order) of channels/columns; "
+                f"expected {reference_columns}, got {list(df.columns)}"
+            )
+
+    arrays = []
+    index: list = []
+    for df in frames:
+        arr, idx = extract_raw_windows(df, window_size=window_size, step=step)
+        arrays.append(arr)
+        index.extend(idx)
+
+    if arrays:
+        stacked = np.concatenate(arrays, axis=0)
+    else:
+        stacked = np.empty((0, len(reference_columns), window_size))
+    return stacked, index
