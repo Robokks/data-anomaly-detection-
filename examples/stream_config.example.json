@@ -1,0 +1,9 @@
+{
+  "model": "models/full_cycle_demo.joblib",
+  "baseline_dir": "examples/tdms",
+  "sample_rate": 10000,
+  "window_size": 256,
+  "host": "0.0.0.0",
+  "port": 9999,
+  "output_csv": "results/live_scores.csv"
+}

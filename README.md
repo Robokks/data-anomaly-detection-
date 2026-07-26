@@ -194,6 +194,26 @@ for running unattended next to a rig. It supports the same
 as `train.py` for building its baseline. Run `python -m src.stream_server -h`
 for the full flag list; Ctrl+C stops it cleanly.
 
+#### Running it with no arguments (e.g. from an IDE's Run button)
+
+Typing out the flags above every run is awkward from an IDE like PyCharm,
+which by default runs a script with no arguments. Instead, put the values
+in a JSON file and pass just `--config PATH` — an example is checked in at
+[`examples/stream_config.example.json`](examples/stream_config.example.json)
+(points at this repo's own checked-in demo model/data, so it runs as-is):
+
+```bash
+python -m src.stream_server --config examples/stream_config.example.json
+```
+
+In PyCharm: Run/Debug Configurations → your `stream_server` config →
+Parameters field → `--config examples/stream_config.example.json`. Copy the
+example file, edit the paths/values for your own model and baseline data,
+and point `--config` at your copy. JSON keys match the flags' long names
+with dashes replaced by underscores (`--baseline-dir` → `baseline_dir`,
+`--window-size` → `window_size`, etc.); any flag also given on the command
+line overrides the same key from the config file.
+
 ## Packaging as a standalone executable
 
 See `packaging/README.md`. Short version: `packaging/app.spec` is a

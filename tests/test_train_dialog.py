@@ -112,6 +112,58 @@ def test_train_dialog_trains_on_multiple_selected_sessions(qtbot, tmp_path):
     assert set(scores["source_file"].unique()) == {"run_0", "run_1"}
 
 
+def test_train_dialog_multi_session_drops_channels_not_common_to_all(qtbot, tmp_path):
+    full_signals = _make_normal_signals(n_samples=2000, seed=0)
+    write_tdms(tmp_path / "run_full.tdms", full_signals)
+    partial_signals = {k: v for k, v in _make_normal_signals(n_samples=2000, seed=1).items() if k != "pressure"}
+    write_tdms(tmp_path / "run_partial.tdms", partial_signals)
+
+    state = AppState()
+    panel = SessionPanel(state)
+    qtbot.addWidget(panel)
+
+    with qtbot.waitSignal(state.sessionsGrouped, timeout=5000):
+        panel.load_directory(tmp_path)
+
+    panel.tree.topLevelItem(0).setSelected(True)
+    panel.tree.topLevelItem(1).setSelected(True)
+    assert len(state.training_sessions) == 2
+    assert "pressure" in state.train_channels
+
+    dialog = TrainDialog(state)
+    qtbot.addWidget(dialog)
+
+    deep_index = dialog.model_type_combo.findData("deep")
+    dialog.model_type_combo.setCurrentIndex(deep_index)
+    dialog.window_size_spin.setValue(100)
+    dialog.epochs_spin.setValue(2)
+
+    with qtbot.waitSignal(dialog.trainingFinished, timeout=60000) as blocker:
+        dialog._on_train_clicked()
+
+    model, model_type, scores = blocker.args
+    assert model_type == "deep"
+    assert model.channels_ == ["vibration", "temperature"]
+    assert "recon_error" in scores.columns
+
+
+def test_train_dialog_window_size_larger_than_data_shows_clear_error(qtbot, tmp_path):
+    state = AppState()
+    state.set_current_session(None, _load_normal_df(tmp_path, n_samples=200))
+
+    dialog = TrainDialog(state)
+    qtbot.addWidget(dialog)
+    dialog.window_size_spin.setValue(256)
+
+    dialog._on_train_clicked()
+
+    assert "window size" in dialog.status_label.text().lower()
+    assert "256" in dialog.status_label.text()
+    assert dialog.progress_bar.isHidden()
+    assert dialog.button_box.isEnabled()
+    assert dialog._thread is None
+
+
 def test_train_dialog_error_with_no_channels_selected(qtbot, tmp_path):
     state = AppState()
     state.set_current_session(None, _load_normal_df(tmp_path))

@@ -173,8 +173,8 @@ class TrainDialog(QDialog):
         )
         ok_button.setEnabled(n_channels > 0)
 
-    def _filter_and_trim(self, df: pd.DataFrame) -> pd.DataFrame:
-        columns = [c for c in self.state.train_channels if c in df.columns]
+    def _filter_and_trim(self, df: pd.DataFrame, channels: list[str]) -> pd.DataFrame:
+        columns = [c for c in channels if c in df.columns]
         if not columns:
             raise RuntimeError("No channels selected for training (check at least one Train checkbox).")
         frame = df[columns].copy()
@@ -187,7 +187,12 @@ class TrainDialog(QDialog):
         phases = DEFAULT_TRANSMISSION_PHASES if session.machine_type == MachineType.TRANSMISSION else None
         return load_session(session, phases=phases)
 
-    def _prepare_frames(self) -> list[pd.DataFrame]:
+    def _prepare_frames(self) -> tuple[list[pd.DataFrame], str | None]:
+        """Returns ``(frames, warning)`` -- ``warning`` is a human-readable
+        note (e.g. about channels dropped for not being common to every
+        selected session) to surface alongside the "Training..." status, or
+        ``None`` when there's nothing to flag.
+        """
         sessions = self.state.training_sessions or ([self.state.current_session] if self.state.current_session else [])
         if not sessions:
             # No TestSession objects tracked (e.g. a DataFrame set directly
@@ -195,12 +200,37 @@ class TrainDialog(QDialog):
             # fall back to whatever is already loaded as current_df.
             if self.state.current_df is None:
                 raise RuntimeError("No session loaded.")
-            return [self._filter_and_trim(self.state.current_df)]
-        return [self._filter_and_trim(self._load_training_session_df(session)) for session in sessions]
+            return [self._filter_and_trim(self.state.current_df, self.state.train_channels)], None
+
+        dfs = [self._load_training_session_df(session) for session in sessions]
+
+        channels = self.state.train_channels
+        warning = None
+        if len(dfs) > 1:
+            # Every frame passed to a single training run must end up with
+            # the exact same column set (the deep-learning path in particular
+            # hard-fails on any mismatch, unlike the classic path's more
+            # forgiving reindex) -- so when sessions were recorded with
+            # different channel sets, use only the channels common to all of
+            # them rather than letting a later ValueError surface deep inside
+            # training.
+            common = [c for c in channels if all(c in df.columns for df in dfs)]
+            missing = [c for c in channels if c not in common]
+            if not common:
+                raise RuntimeError(
+                    "No selected channel is present in all of the selected sessions -- "
+                    "pick sessions that share at least one Train-checked channel."
+                )
+            if missing:
+                warning = f"Note: {', '.join(missing)} not present in every selected session -- dropped from training."
+            channels = common
+
+        frames = [self._filter_and_trim(df, channels) for df in dfs]
+        return frames, warning
 
     def _on_train_clicked(self) -> None:
         try:
-            frames = self._prepare_frames()
+            frames, warning = self._prepare_frames()
         except Exception as exc:  # noqa: BLE001
             self.status_label.setText(f"Error: {exc}")
             return
@@ -208,6 +238,16 @@ class TrainDialog(QDialog):
         model_type = self.model_type_combo.currentData()
         window_size = self.window_size_spin.value()
         step = self.step_spin.value() or None
+
+        too_short = [len(f) for f in frames if len(f) < window_size]
+        if too_short:
+            self.status_label.setText(
+                f"Error: window size {window_size} is larger than the available data in "
+                f"{len(too_short)} of {len(frames)} selected session(s) (shortest has "
+                f"{min(too_short)} row(s) after any time-range trim). Reduce the window "
+                "size or the time-range selection."
+            )
+            return
 
         model_kwargs: dict = {"contamination": self.contamination_spin.value()}
         if model_type == "classic":
@@ -220,7 +260,7 @@ class TrainDialog(QDialog):
             )
 
         self.button_box.setEnabled(False)
-        self.status_label.setText("Training...")
+        self.status_label.setText(f"{warning} Training..." if warning else "Training...")
         self.progress_bar.show()
 
         self._thread = QThread(self)

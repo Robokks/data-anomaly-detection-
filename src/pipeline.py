@@ -7,6 +7,20 @@ later, the GUI call through here rather than duplicating this logic.
 """
 from __future__ import annotations
 
+import os
+
+# Must be set before torch actually initializes its runtime (triggered below,
+# directly or via src.dl_model) in a process that also imports scikit-learn
+# (src.anomaly_model, imported right below too) -- both ship their own
+# bundled OpenMP runtime, and loading both in one process without this can
+# abort the whole process with a bare "Fatal Python error: Aborted" and no
+# Python-level exception at all, typically the first time a deep-learning
+# model actually trains/scores after a classic (sklearn) model has already
+# run. This is the standard, safe mitigation for that whole class of
+# duplicate-OpenMP-runtime issue: it tells the runtime to tolerate the
+# duplicate load instead of aborting.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 from pathlib import Path
 from typing import Literal
 

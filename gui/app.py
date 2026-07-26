@@ -26,6 +26,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # installed.
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
+# Also must be set before torch/scikit-learn's OpenMP runtimes actually
+# initialize -- src.pipeline sets this too (belt and suspenders; it's the
+# actual common import point for both), see the comment there for the full
+# explanation of the duplicate-OpenMP-runtime abort this avoids.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
 
