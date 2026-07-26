@@ -1,39 +1,18 @@
 """Main application window shell.
 
-This wires up the overall layout (toolbar, session/channel/plot regions,
-status bar) and holds the shared ``AppState``. The session/channel/plot
-panels themselves are placeholders here -- they're built out in follow-up
-work (gui/session_panel.py, gui/channel_panel.py, gui/plot_panel.py) and
-swapped in without changing this file's overall structure.
+Wires up the overall layout (toolbar, session/plot/channel regions, status
+bar) and holds the shared ``AppState``.
 """
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import (
-    QLabel,
-    QMainWindow,
-    QSplitter,
-    QStatusBar,
-    QToolBar,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QMainWindow, QSplitter, QStatusBar, QToolBar
 
 from gui.app_state import AppState
+from gui.channel_panel import ChannelPanel
+from gui.plot_panel import PlotPanel
 from gui.session_panel import SessionPanel
-
-
-class _PlaceholderPanel(QWidget):
-    """Simple labeled placeholder, swapped out by later panel implementations."""
-
-    def __init__(self, text: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        label = QLabel(text)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setWordWrap(True)
-        layout.addWidget(label)
 
 
 class MainWindow(QMainWindow):
@@ -62,10 +41,10 @@ class MainWindow(QMainWindow):
     def _build_central_widget(self) -> None:
         # Left: session/file browser.
         self.session_panel = SessionPanel(self.state)
-        # Center: plot (task: gui/plot_panel.py).
-        self.plot_panel = _PlaceholderPanel("Plot panel\n(multi-channel plot + time-range selector)\ncoming soon")
-        # Right: channel curation (task: gui/channel_panel.py).
-        self.channel_panel = _PlaceholderPanel("Channel panel\n(Plot / Train checkboxes)\ncoming soon")
+        # Center: multi-channel plot + time-range selector.
+        self.plot_panel = PlotPanel(self.state)
+        # Right: channel curation (Plot / Train checkboxes).
+        self.channel_panel = ChannelPanel(self.state)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self.session_panel)
