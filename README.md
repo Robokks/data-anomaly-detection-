@@ -33,6 +33,13 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+A desktop GUI (`gui/app.py`, built on PySide6/Qt) is in progress alongside
+the CLI — run it with `python -m gui.app`. On Linux, Qt needs a couple of
+system libraries that aren't pulled in by pip: if you hit an error like
+`libEGL.so.1: cannot open shared object file`, install them with
+`sudo apt-get install libegl1 libegl-mesa0` (Debian/Ubuntu; other distros
+have equivalent packages). Not needed on Windows/macOS.
+
 ## Quickstart (with synthetic demo data)
 
 No real TDMS files yet? Generate a synthetic rig (vibration / temperature /
