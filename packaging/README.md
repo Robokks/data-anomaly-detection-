@@ -99,19 +99,25 @@ good:
    the machine.
 2. Confirm the main window opens (title bar reads "TDMS/CSV/Excel Anomaly
    Detection") and is responsive (resize the window, no crash/hang).
-3. Use the "Browse Folder..." toolbar action -- confirm the folder picker
-   opens and, after selecting a folder, the status bar updates to show
-   the selected path.
-4. Once available: confirm the session/file list panel populates from
-   the selected folder.
-5. Once available: confirm the plot panel renders a channel's data
-   without error.
-6. Once available: confirm the channel curation panel (Plot/Train
-   checkboxes) responds to selection.
-7. Close the app normally (no lingering process in Task Manager
-   afterward).
-
-Some of the panels referenced above (session/file browser, plot panel,
-channel curation panel) are placeholders as of this writing and are being
-built out in parallel elsewhere in the repo -- treat steps 4-6 as "once
-available" until those panels are wired into `gui/main_window.py`.
+3. Use "Browse Folder..." -- pick a folder of test-rig recordings (or the
+   synthetic demo data from `python -m src.synthetic_tdms`). Confirm the
+   session tree in the left panel populates.
+4. Try each **machine type** in the dropdown -- confirm the tree
+   regroups (single-file sessions for General; grouped UUT sessions with
+   phase/pocket tags for Transmission/Motor Test Bench/Endurance).
+5. Select a session -- confirm the center plot renders each channel and
+   the right-hand channel table lists them with working Plot/Train
+   checkboxes; toggling Plot should add/remove that channel's curve.
+6. Drag the shaded time-range region on the plot (and try typing into the
+   Start/End fields, and the "Full Data" button) -- confirm it updates
+   smoothly at real data sizes.
+7. Click "Train..." -- run once with **Classic** and once with **Deep
+   Learning**, confirm the dialog stays responsive during deep-learning
+   training and that flagged windows appear in the results table and as
+   markers on the plot afterward.
+8. Click "Signature Analysis..." -- pick a channel, "Compute Signature",
+   confirm the baseline-vs-current spectrum plot renders.
+9. "Save Model..." and the results panel's "Export CSV..." -- confirm
+   both write files to disk without error.
+10. Close the app normally (no lingering process in Task Manager
+    afterward).

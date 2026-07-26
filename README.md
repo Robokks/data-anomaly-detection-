@@ -1,30 +1,43 @@
-# LabVIEW TDMS Anomaly Detection
+# LabVIEW Test-Rig Anomaly Detection
 
-Train an unsupervised anomaly-detection model on LabVIEW TDMS sensor data and
-use it to flag anomalous time windows in new recordings.
+A desktop app (and a scriptable CLI) for training an AI anomaly-detection
+model on sensor data from LabVIEW test rigs — TDMS, CSV, or Excel — and
+using it to flag anomalous time windows in new recordings.
 
-## How it works
+## What it does
 
-1. **Load** — `src/tdms_loader.py` reads `.tdms` files (via
-   [npTDMS](https://nptdms.readthedocs.io/)) into pandas DataFrames, one
-   column per channel.
-2. **Feature extraction** — `src/features.py` slides a fixed-size window over
-   every channel and computes per-window statistics (mean, std, min/max,
-   RMS, skew, kurtosis, dominant FFT magnitude, zero-crossing rate).
-3. **Model** — `src/anomaly_model.py` fits an `AnomalyDetector` on windows of
-   *normal* operating data only (no labeled anomalies required):
-   - **Isolation Forest** catches multivariate outlier windows.
-   - **PCA reconstruction error** catches drift and subtle shape changes
-     relative to the learned "normal" subspace.
-   - The two signals are z-normalized and averaged into a single
-     `anomaly_score`; windows above a `contamination`-percentile threshold
-     (learned from the training data) are flagged `is_anomaly`.
-4. **Detect** — `src/detect.py` scores new TDMS files against a saved model
-   and writes a CSV (and optional PNG plot) of per-window scores.
-
-This approach needs no labeled fault data, which fits how most LabVIEW test
-rigs are set up: you have plenty of recordings of normal operation and few
-(or no) confirmed anomaly examples.
+- **Loads TDMS, CSV, and Excel** data uniformly, scanning a folder
+  recursively regardless of file naming or subfolder layout.
+- **Understands multi-file test rigs.** A single unit-under-test (UUT) isn't
+  always one file — pick a **machine type** and the app reassembles files
+  back into one logical session per UUT:
+  - **General** — one file = one UUT (the default).
+  - **Transmission** — a UUT's cycle is split across ramp-up / ramp-down /
+    steady-state / coasting files; analysis defaults to steady-state +
+    coasting (ramp phases are transients, available but off by default).
+  - **Motor test bench** — a UUT's files are split by test step/"pocket"
+    number (a physical test station/slot).
+  - **Endurance test rig** — a UUT may log to one file or several
+    size-rolled-over chunks, reassembled chronologically.
+- **Lets you curate the data visually** before training: plot any number of
+  channels together to spot a bad one, independently choose which channels
+  feed the model (Plot vs. Train checkboxes), and restrict analysis to the
+  full recording or a specific time range.
+- **Trains two kinds of model**, picked per run:
+  - **Classic** — Isolation Forest + PCA reconstruction error on
+    hand-crafted per-window statistics. Fast, no GPU, good default.
+  - **Deep learning** — a 1D convolutional autoencoder (PyTorch) trained
+    directly on raw waveform windows, learning shape/temporal structure the
+    classic model's summary stats don't capture.
+  Both are unsupervised (trained on "normal" data only — no labeled fault
+  examples needed) and produce the same `anomaly_score`/`is_anomaly` shape,
+  so they're interchangeable.
+- **Signature analysis** — compares a channel's live FFT spectrum against a
+  learned normal baseline (mean ± std envelope) to spot drift or new
+  frequency components.
+- Everything is available both as a **native desktop GUI** (PySide6/Qt,
+  packagable into a standalone `.exe`) and as **CLI scripts** for scripted,
+  headless, or scheduled use — both go through the same underlying pipeline.
 
 ## Setup
 
@@ -33,36 +46,58 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-A desktop GUI (`gui/app.py`, built on PySide6/Qt) is in progress alongside
-the CLI — run it with `python -m gui.app`. On Linux, Qt needs a couple of
-system libraries that aren't pulled in by pip: if you hit an error like
-`libEGL.so.1: cannot open shared object file`, install them with
-`sudo apt-get install libegl1 libegl-mesa0` (Debian/Ubuntu; other distros
-have equivalent packages). Not needed on Windows/macOS.
+Notes:
+- **torch**: the plain `pip install -r requirements.txt` pulls whichever
+  wheel PyPI resolves, which may be a large GPU-enabled build. This app is
+  CPU-only by design; for a smaller install use the CPU wheel instead:
+  `pip install torch --index-url https://download.pytorch.org/whl/cpu`.
+- **Linux GUI system libraries**: Qt needs a couple of libraries pip doesn't
+  install. If you hit `libEGL.so.1: cannot open shared object file`, run
+  `sudo apt-get install libegl1 libegl-mesa0` (Debian/Ubuntu; other distros
+  have equivalent packages). Not needed on Windows/macOS.
 
-## Quickstart (with synthetic demo data)
+## Running the GUI
 
-No real TDMS files yet? Generate a synthetic rig (vibration / temperature /
-pressure channels) with injected spikes, drift, and noise bursts:
+```bash
+python -m gui.app
+```
+
+Workflow: **Browse Folder** → pick a **machine type** → the app scans the
+folder in the background and groups files into per-UUT sessions → select a
+session in the tree → toggle **Plot**/**Train** checkboxes per channel and
+drag the time-range region on the plot to curate what goes into training →
+**Train...** (choose Classic or Deep Learning, set hyperparameters) →
+flagged windows show up in the results table and as an overlay on the plot
+→ **Signature Analysis...** for the FFT-vs-baseline view → **Save Model...**
+/ export scores to CSV.
+
+## Running the CLI
+
+Generate synthetic demo data if you don't have real files yet (vibration /
+temperature / pressure channels with injected spikes, drift, and noise
+bursts):
 
 ```bash
 python -m src.synthetic_tdms --out-dir data --n-normal 5 --n-samples 20000
 ```
 
-This writes normal training files to `data/normal/` and one test file with
-labeled anomaly ranges to `data/test/test_run.tdms`.
-
-Train the model on the normal data:
+Train on a folder of normal recordings:
 
 ```bash
 python -m src.train \
   --data-dir data/normal \
-  --window-size 256 \
-  --contamination 0.02 \
+  --window-size 256 --contamination 0.02 \
+  --model-type classic \
   --model-out models/anomaly_detector.joblib
 ```
 
-Score a new recording:
+Use `--model-type deep` for the autoencoder instead (see `--epochs`,
+`--batch-size`, `--latent-dim`). For a multi-file rig, add
+`--machine-type {transmission,motor_test_bench,endurance}` (and optionally
+`--phases`/`--pockets`/`--uut-pattern`); add `--start`/`--end` to restrict to
+a time range. `--recursive`/`--no-recursive` controls subfolder scanning.
+
+Score a new recording or folder:
 
 ```bash
 python -m src.detect \
@@ -73,24 +108,19 @@ python -m src.detect \
   --plot
 ```
 
-`results/scores.csv` gets one row per window (`iso_forest_score`,
-`pca_recon_error`, `anomaly_score`, `is_anomaly`); `results/scores.png`
-plots the anomaly score over time with the threshold and flagged windows
-marked.
+`results/scores.csv` has one row per window (`anomaly_score`, `is_anomaly`,
+plus model-specific columns); `results/scores.png` plots the score over time
+with the threshold and flagged windows marked. Run `python -m src.train -h`
+/ `python -m src.detect -h` for the full flag list.
 
-## Using your own TDMS data
+## Packaging as a standalone executable
 
-1. Put a folder of TDMS recordings that represent **normal** operation in a
-   directory, e.g. `data/normal/`.
-2. If a file has multiple groups or you only want specific channels, pass
-   `--group <name>` and/or `--channels ch1 ch2 ...` to `train.py`/`detect.py`.
-3. Pick `--window-size` based on your sample rate — it should span enough
-   samples to characterize one "cycle" of behavior (e.g. a few periods of
-   your dominant vibration frequency), typically 100s–1000s of samples.
-4. `--contamination` is your best estimate of what fraction of normal-data
-   windows are already borderline/noisy; 0.01–0.05 is a reasonable start.
-5. Train, then run `detect.py` on held-out or live recordings. Re-train
-   periodically as your rig's "normal" baseline drifts (seasonal, wear, etc).
+See `packaging/README.md`. Short version: `packaging/app.spec` is a
+PyInstaller spec for `gui/app.py`; run `packaging/build_windows.bat` **on a
+Windows machine** to get a real `.exe` (PyInstaller isn't a
+cross-compiler — it can't be built here). `packaging/build_linux_smoke.sh`
+builds+headlessly-launches a Linux binary in this repo's environment purely
+to smoke-test that the spec's imports resolve, not as a distributable.
 
 ## Tests
 
@@ -98,31 +128,56 @@ marked.
 pytest tests/ -v
 ```
 
-Tests generate synthetic TDMS data, train a model, and assert that injected
-anomalies score higher than normal windows — this exercises the full
-load → feature-extract → train → score pipeline without needing real data.
+All GUI tests run headlessly (via `pytest-qt` + `QT_QPA_PLATFORM=offscreen`,
+set automatically in `tests/conftest.py`) — no display needed. Tests use
+synthetic TDMS/CSV/session fixtures throughout (`src/synthetic_tdms.py`,
+`src/synthetic_sessions.py`), so the full pipeline is exercised without
+needing real data: loading, scanning, session grouping, time-range
+selection, feature extraction, both model types, spectral analysis, every
+GUI panel individually, and a full end-to-end run through `MainWindow`
+(`tests/test_main_window_integration.py`).
 
 ## Project layout
 
 ```
 src/
-  tdms_loader.py     TDMS -> pandas DataFrame
-  features.py        windowed statistical feature extraction
-  anomaly_model.py    AnomalyDetector (Isolation Forest + PCA reconstruction)
-  train.py            CLI: fit a model on normal data
-  detect.py            CLI: score new data against a saved model
-  synthetic_tdms.py    generate synthetic TDMS files for demo/testing
-tests/
-  test_pipeline.py    end-to-end pipeline tests on synthetic data
+  data_loader.py       unified .tdms/.csv/.xlsx loading + recursive folder scanning
+  tdms_loader.py         TDMS -> pandas DataFrame (wrapped by data_loader.py)
+  session_grouping.py    machine-type-aware multi-file -> per-UUT session grouping
+  time_range.py           full-data or [start, end] slicing
+  features.py               windowed statistical + raw-window feature extraction
+  anomaly_model.py            AnomalyDetector (classic: Isolation Forest + PCA)
+  dl_model.py                   AutoencoderDetector (deep: 1D conv autoencoder)
+  spectral.py                     SignatureBaseline (FFT signature analysis)
+  pipeline.py                       dispatch layer: load -> train/score, either model type
+  train.py / detect.py                CLIs, built on pipeline.py
+  synthetic_tdms.py, synthetic_sessions.py   synthetic data generators for demo/testing
+gui/
+  app.py                entry point (python -m gui.app)
+  main_window.py           overall layout + toolbar actions
+  app_state.py               shared cross-panel state (Qt signals)
+  session_panel.py             machine-type selector + scan/group tree
+  plot_panel.py                  pyqtgraph multi-channel plot + time-range selector
+  channel_panel.py                 Plot/Train channel curation checkboxes
+  train_dialog.py                    model training (background thread)
+  results_panel.py                     flagged-window table + CSV export
+  signature_panel.py                     FFT-vs-baseline signature analysis
+packaging/            PyInstaller spec + build scripts
+tests/                 pytest + pytest-qt, all headless
 data/, models/, results/   generated at runtime (gitignored)
 ```
 
-## Next steps / extension ideas
+## Extension ideas
 
-- Swap or ensemble in other detectors (One-Class SVM, LOF, autoencoders) by
-  following the `AnomalyDetector` interface in `anomaly_model.py`.
+- Fold spectral deviation into the combined `anomaly_score` (the hook
+  already exists — `AnomalyDetector.spectral_weight`/`signature_baselines`,
+  currently an opt-in no-op) once real spectral behavior has been validated
+  on actual rig data.
+- Per-session (rather than one shared) channel/time-range curation when
+  training across many sessions in a folder at once.
 - If you later collect confirmed anomaly labels, use them to validate/tune
   `--contamination` and the threshold rather than to train supervised — or
   add a supervised classifier on top of the same feature set.
-- Wire `detect.py` into a scheduled job or LabVIEW post-processing step to
-  score new runs automatically.
+- Tighten the filename/folder heuristics used to auto-detect phase
+  (ramp/steady/coast) and pocket/step numbers once you can share real
+  filename examples from your machines.
