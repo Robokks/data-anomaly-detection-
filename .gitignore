@@ -14,3 +14,7 @@ data/*.tdms
 *.png
 !data/.gitkeep
 !models/.gitkeep
+
+# PyInstaller packaging build outputs (see packaging/README.md) -- not source
+/build/
+/dist/
