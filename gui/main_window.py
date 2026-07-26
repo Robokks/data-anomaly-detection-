@@ -11,7 +11,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QFileDialog,
     QLabel,
     QMainWindow,
     QSplitter,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.app_state import AppState
+from gui.session_panel import SessionPanel
 
 
 class _PlaceholderPanel(QWidget):
@@ -60,8 +60,8 @@ class MainWindow(QMainWindow):
         self.browse_action = browse_action
 
     def _build_central_widget(self) -> None:
-        # Left: session/file browser (task: gui/session_panel.py).
-        self.session_panel = _PlaceholderPanel("Session panel\n(machine-type selector + file/session tree)\ncoming soon")
+        # Left: session/file browser.
+        self.session_panel = SessionPanel(self.state)
         # Center: plot (task: gui/plot_panel.py).
         self.plot_panel = _PlaceholderPanel("Plot panel\n(multi-channel plot + time-range selector)\ncoming soon")
         # Right: channel curation (task: gui/channel_panel.py).
@@ -78,8 +78,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(splitter)
 
     def _on_browse_folder(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Select a data folder")
-        if not directory:
-            return
-        self.state.set_root_directory(directory)
-        self.statusBar().showMessage(f"Selected folder: {directory}")
+        # Toolbar action delegates to the session panel's own Browse Folder
+        # button, so there's one entry point for the folder-picking dialog
+        # and the resulting scan+group, reachable from two places in the UI.
+        self.session_panel._on_browse_clicked()
