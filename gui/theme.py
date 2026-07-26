@@ -217,6 +217,16 @@ QScrollBar::add-line, QScrollBar::sub-line {{
     height: 0;
     width: 0;
 }}
+QProgressBar {{
+    background: {bg};
+    border: 1px solid {border};
+    border-radius: 4px;
+    height: 6px;
+}}
+QProgressBar::chunk {{
+    background: {accent};
+    border-radius: 4px;
+}}
 QCheckBox::indicator {{
     width: 14px;
     height: 14px;

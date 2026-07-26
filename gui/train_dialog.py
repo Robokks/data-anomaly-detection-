@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QLabel,
+    QProgressBar,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -131,6 +132,17 @@ class TrainDialog(QDialog):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
+        # Indeterminate (busy) progress bar -- training has no reliable
+        # step-by-step progress to report (classic fits IsolationForest+PCA
+        # in one call; the deep-learning epoch loop isn't instrumented with
+        # a progress callback), so this communicates "working" rather than
+        # "N% done."
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Train")
         self.button_box.accepted.connect(self._on_train_clicked)
@@ -192,6 +204,7 @@ class TrainDialog(QDialog):
 
         self.button_box.setEnabled(False)
         self.status_label.setText("Training...")
+        self.progress_bar.show()
 
         self._thread = QThread(self)
         self._worker = _TrainWorker(model_type, [frame], window_size, step, model_kwargs)
@@ -206,6 +219,7 @@ class TrainDialog(QDialog):
     def _on_training_finished(self, model, model_type: str, scores: pd.DataFrame) -> None:
         n_anom = int(scores["is_anomaly"].sum())
         self.status_label.setText(f"Training complete: {n_anom} / {len(scores)} windows flagged.")
+        self.progress_bar.hide()
         self.button_box.setEnabled(True)
         self.state.set_model(model, model_type)
         self.trainingFinished.emit(model, model_type, scores)
@@ -213,4 +227,5 @@ class TrainDialog(QDialog):
 
     def _on_training_error(self, message: str) -> None:
         self.status_label.setText(f"Training failed: {message}")
+        self.progress_bar.hide()
         self.button_box.setEnabled(True)

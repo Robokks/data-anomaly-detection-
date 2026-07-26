@@ -29,9 +29,13 @@ def test_train_dialog_classic_training_end_to_end(qtbot, tmp_path):
 
     ok_button = dialog.button_box.button(dialog.button_box.StandardButton.Ok)
     assert ok_button.isEnabled()
+    assert dialog.progress_bar.isHidden()
+
+    dialog._on_train_clicked()
+    assert not dialog.progress_bar.isHidden()
 
     with qtbot.waitSignal(dialog.trainingFinished, timeout=15000) as blocker:
-        dialog._on_train_clicked()
+        pass
 
     model, model_type, scores = blocker.args
     assert model_type == "classic"
@@ -39,6 +43,7 @@ def test_train_dialog_classic_training_end_to_end(qtbot, tmp_path):
     assert "is_anomaly" in scores.columns
     assert state.model is model
     assert state.model_type == "classic"
+    assert dialog.progress_bar.isHidden()
 
 
 def test_train_dialog_respects_train_channel_selection(qtbot, tmp_path):
