@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QSplitter, 
 
 from gui.app_state import AppState
 from gui.channel_panel import ChannelPanel
+from gui.live_monitor_panel import LiveMonitorPanel
 from gui.plot_panel import PlotPanel
 from gui.results_panel import ResultsPanel
 from gui.session_panel import SessionPanel
@@ -23,6 +24,7 @@ class MainWindow(QMainWindow):
     def __init__(self, state: AppState | None = None) -> None:
         super().__init__()
         self.state = state or AppState()
+        self.live_monitor_panel: LiveMonitorPanel | None = None
 
         self.setWindowTitle("TDMS/CSV/Excel Anomaly Detection")
         self.resize(1200, 800)
@@ -51,6 +53,11 @@ class MainWindow(QMainWindow):
         signature_action.triggered.connect(self._on_signature_clicked)
         toolbar.addAction(signature_action)
         self.signature_action = signature_action
+
+        live_monitor_action = QAction("Live Monitor...", self)
+        live_monitor_action.triggered.connect(self._on_live_monitor_clicked)
+        toolbar.addAction(live_monitor_action)
+        self.live_monitor_action = live_monitor_action
 
         save_model_action = QAction("Save Model...", self)
         save_model_action.triggered.connect(self._on_save_model_clicked)
@@ -103,6 +110,15 @@ class MainWindow(QMainWindow):
     def _on_signature_clicked(self) -> None:
         dialog = SignatureDialog(self.state, self)
         dialog.exec()
+
+    def _on_live_monitor_clicked(self) -> None:
+        # Non-modal: keep a single instance and raise it on repeat clicks,
+        # rather than spawning duplicate dialogs (and duplicate servers).
+        if self.live_monitor_panel is None:
+            self.live_monitor_panel = LiveMonitorPanel(self.state, self)
+        self.live_monitor_panel.show()
+        self.live_monitor_panel.raise_()
+        self.live_monitor_panel.activateWindow()
 
     def _on_save_model_clicked(self) -> None:
         if self.state.model is None:
