@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Trained model artifacts and generated data (regenerate locally, don't commit)
+models/*.joblib
+data/*.tdms
+*.png
+!data/.gitkeep
+!models/.gitkeep
